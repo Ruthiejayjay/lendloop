@@ -8,13 +8,29 @@
  * @module
  */
 
+import type * as automation from "../automation.js";
+import type * as http from "../http.js";
+import type * as lib_auth from "../lib/auth.js";
+import type * as lib_hmac from "../lib/hmac.js";
+import type * as loans from "../loans.js";
+import type * as tools from "../tools.js";
+import type * as users from "../users.js";
+
 import type {
   ApiFromModules,
   FilterApi,
   FunctionReference,
 } from "convex/server";
 
-declare const fullApi: ApiFromModules<{}>;
+declare const fullApi: ApiFromModules<{
+  automation: typeof automation;
+  http: typeof http;
+  "lib/auth": typeof lib_auth;
+  "lib/hmac": typeof lib_hmac;
+  loans: typeof loans;
+  tools: typeof tools;
+  users: typeof users;
+}>;
 
 /**
  * A utility for referencing Convex functions in your app's public API.
