@@ -16,6 +16,7 @@ import {
 import { BorrowModal } from "./BorrowModal";
 import { LoanCard } from "./LoanCard";
 import { ToolFormModal, type ToolFormValues } from "./ToolFormModal";
+import { ConfirmModal } from "./ConfirmModal";
 
 type Tab = "all" | "my_listings" | "my_requests" | "incoming" | "admin";
 function extractError(err: unknown): string {
@@ -168,6 +169,10 @@ function DashboardContent() {
     _id: Id<"tools">;
     name: string;
   } | null>(null);
+  const [removingTool, setRemovingTool] = useState<{
+    _id: Id<"tools">;
+    name: string;
+  } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [banner, setBanner] = useState<{
     type: "error" | "success";
@@ -227,13 +232,18 @@ function DashboardContent() {
       throw new Error(extractError(err));
     }
   }
-  async function handleRemoveTool(toolId: Id<"tools">, toolName: string) {
-    if (!window.confirm(`Remove "${toolName}" from LendLoop?`)) return;
-    await runAction(
-      toolId,
-      () => removeTool({ toolId }),
-      `Removed "${toolName}".`,
-    );
+  function handleRemoveTool(toolId: Id<"tools">, toolName: string) {
+    setRemovingTool({ _id: toolId, name: toolName });
+  }
+
+  async function handleConfirmRemoveTool() {
+    if (!removingTool) return;
+    try {
+      await removeTool({ toolId: removingTool._id });
+      setBanner({ type: "success", text: `Removed "${removingTool.name}".` });
+    } catch (err) {
+      throw new Error(extractError(err));
+    }
   }
 
   async function handleBorrowSubmit(values: {
@@ -576,7 +586,7 @@ function DashboardContent() {
                             loanId: id as Id<"loans">,
                             decision: "approved",
                           }),
-                        "Borrow request approved."
+                        "Borrow request approved.",
                       )
                     }
                     onDecline={(id) =>
@@ -587,14 +597,14 @@ function DashboardContent() {
                             loanId: id as Id<"loans">,
                             decision: "declined",
                           }),
-                        "Borrow request declined."
+                        "Borrow request declined.",
                       )
                     }
                     onMarkReturned={(id) =>
                       runAction(
                         id,
                         () => markReturned({ loanId: id as Id<"loans"> }),
-                        "Loan marked as returned."
+                        "Loan marked as returned.",
                       )
                     }
                   />
@@ -613,7 +623,7 @@ function DashboardContent() {
                 () => setTrustedLender({ userId, trustedLender: next }),
                 next
                   ? "Marked lender as Trusted Lender."
-                  : "Removed Trusted Lender badge."
+                  : "Removed Trusted Lender badge.",
               )
             }
           />
@@ -646,6 +656,15 @@ function DashboardContent() {
           toolName={borrowingTool.name}
           onSubmit={handleBorrowSubmit}
           onClose={() => setBorrowingTool(null)}
+        />
+      )}
+      {removingTool && (
+        <ConfirmModal
+          title="Remove tool listing?"
+          description={`Are you sure you want to remove "${removingTool.name}" from LendLoop? Any open pending requests for it will be declined.`}
+          confirmLabel="Remove tool"
+          onConfirm={handleConfirmRemoveTool}
+          onClose={() => setRemovingTool(null)}
         />
       )}
     </div>
