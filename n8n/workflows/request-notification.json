@@ -1,0 +1,155 @@
+{
+  "name": "LendLoop - Request Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-1",
+      "name": "Loan Event Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "lendloop-request-events"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst secret = $env.N8N_HMAC_SECRET;\nif (!secret) {\n  return [{ json: { valid: false, reason: 'N8N_HMAC_SECRET is not configured' } }];\n}\n\nconst item = $input.first();\nconst rawHeaders = item.json.headers || {};\nconst headers = Object.fromEntries(\n  Object.entries(rawHeaders).map(([k, v]) => [k.toLowerCase(), String(v)])\n);\n\nconst timestamp = headers['x-lendloop-timestamp'];\nconst incomingSig = (headers['x-lendloop-signature'] || '').replace(/^sha256=/i, '').trim().toLowerCase();\n\nif (!timestamp || !incomingSig) {\n  return [{ json: { valid: false, reason: 'Missing HMAC timestamp or signature header' } }];\n}\n\nconst tsNum = Number(timestamp);\nconst nowSec = Math.floor(Date.now() / 1000);\nif (!Number.isFinite(tsNum) || Math.abs(nowSec - tsNum) > 300) {\n  return [{ json: { valid: false, reason: 'Timestamp outside allowed 5-minute replay window' } }];\n}\n\nlet rawBody;\nif (item.binary && item.binary.data) {\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  rawBody = buf.toString('utf8');\n} else {\n  rawBody = typeof item.json.body === 'string' ? item.json.body : JSON.stringify(item.json.body || {});\n}\n\nconst expected = crypto\n  .createHmac('sha256', secret)\n  .update(`${timestamp}.${rawBody}`)\n  .digest('hex');\n\nlet sigMatches = false;\ntry {\n  sigMatches = crypto.timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(incomingSig, 'utf8'));\n} catch {\n  sigMatches = false;\n}\n\nif (!sigMatches) {\n  return [{ json: { valid: false, reason: 'Invalid HMAC signature' } }];\n}\n\nconst data = JSON.parse(rawBody);\n\nconst templates = {\n  request_created: {\n    subject: `New borrow request for ${data.toolName}`,\n    message: `Hi ${data.recipientName}, ${data.actorName} requested to borrow \"${data.toolName}\" from ${data.startDate} to ${data.endDate}.`,\n  },\n  request_approved: {\n    subject: `Approved: ${data.toolName}`,\n    message: `Hi ${data.recipientName}, ${data.actorName} approved your request to borrow \"${data.toolName}\" (${data.startDate} to ${data.endDate}).`,\n  },\n  request_declined: {\n    subject: `Declined: ${data.toolName}`,\n    message: `Hi ${data.recipientName}, ${data.actorName} declined your request for \"${data.toolName}\".`,\n  },\n  loan_returned: {\n    subject: `Returned: ${data.toolName}`,\n    message: `Hi ${data.recipientName}, ${data.actorName} marked \"${data.toolName}\" as returned. Thanks for sharing!`,\n  },\n};\n\nconst tpl = templates[data.eventType] || {\n  subject: `LendLoop update: ${data.toolName}`,\n  message: `Loan update (${data.eventType}) for ${data.toolName}.`,\n};\n\n// Data minimization: pass forward only fields required to send the notification\nreturn [{\n  json: {\n    valid: true,\n    idempotencyKey: data.idempotencyKey,\n    eventType: data.eventType,\n    loanId: data.loanId,\n    recipientName: data.recipientName,\n    recipientEmail: data.recipientEmail,\n    subject: tpl.subject,\n    message: tpl.message,\n  },\n}];"
+      },
+      "id": "verify-hmac-1",
+      "name": "Verify HMAC & Build Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-valid-1",
+      "name": "Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const n = $input.first().json;\nconst record = {\n  channel: 'mock-email',\n  to: n.recipientEmail || '(no email)',\n  recipientName: n.recipientName,\n  subject: n.subject,\n  message: n.message,\n  eventType: n.eventType,\n  idempotencyKey: n.idempotencyKey,\n  sentAt: new Date().toISOString(),\n};\n\nconsole.log('[LendLoop Notification]', JSON.stringify(record));\n\n// Swap or follow this node with an Email / Slack / Discord node using n8n Credentials.\nreturn [{ json: { ok: true, delivered: true, idempotencyKey: n.idempotencyKey } }];"
+      },
+      "id": "send-notification-1",
+      "name": "Send Notification (Mock Log)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-ok-1",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1180, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: $json.reason || 'Unauthorized' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-401-1",
+      "name": "Respond 401 Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [940, 420]
+    }
+  ],
+  "connections": {
+    "Loan Event Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify HMAC & Build Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify HMAC & Build Notification": {
+      "main": [
+        [
+          {
+            "node": "Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Mock Log)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification (Mock Log)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
