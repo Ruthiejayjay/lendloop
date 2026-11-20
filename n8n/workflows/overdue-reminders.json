@@ -1,0 +1,152 @@
+{
+  "name": "LendLoop - Daily Overdue Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "schedule-1",
+      "name": "Daily 09:00 UTC Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst secret = $env.N8N_HMAC_SECRET;\nconst baseUrl = ($env.CONVEX_SITE_URL || '').replace(/\\/$/, '');\n\nif (!secret || !baseUrl) {\n  throw new Error('Missing N8N_HMAC_SECRET or CONVEX_SITE_URL environment variable');\n}\n\nconst timestamp = Math.floor(Date.now() / 1000).toString();\nconst canonical = 'GET:/api/n8n/overdue-loans';\nconst sig = crypto\n  .createHmac('sha256', secret)\n  .update(`${timestamp}.${canonical}`)\n  .digest('hex');\n\nreturn [{\n  json: {\n    url: `${baseUrl}/api/n8n/overdue-loans`,\n    timestamp,\n    signature: `sha256=${sig}`,\n  },\n}];"
+      },
+      "id": "sign-get-1",
+      "name": "Sign Overdue Fetch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-fetch-1",
+      "name": "Fetch Overdue Loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst secret = $env.N8N_HMAC_SECRET;\nconst baseUrl = ($env.CONVEX_SITE_URL || '').replace(/\\/$/, '');\nconst loans = $input.first().json.loans || [];\n\nif (loans.length === 0) {\n  console.log('[LendLoop Overdue] No overdue loans needing reminders today.');\n  return [];\n}\n\nconst output = [];\n\nfor (const loan of loans) {\n  // Mock reminder delivery (replace or follow with Email / Slack node using n8n Credentials)\n  const reminder = {\n    channel: 'mock-email',\n    to: loan.borrowerEmail || '(no email)',\n    borrowerName: loan.borrowerName,\n    subject: `Reminder: Please return \"${loan.toolName}\"`,\n    message: `Hi ${loan.borrowerName}, \"${loan.toolName}\" borrowed from ${loan.lenderName} was due back on ${loan.endDate}. Please coordinate returning it soon.`,\n    idempotencyKey: loan.idempotencyKey,\n    sentAt: new Date().toISOString(),\n  };\n  console.log('[LendLoop Overdue Reminder]', JSON.stringify(reminder));\n\n  const rawBody = JSON.stringify({\n    loanId: loan.loanId,\n    idempotencyKey: loan.idempotencyKey,\n    status: 'sent',\n    summary: `Overdue reminder sent to ${loan.borrowerName}`,\n  });\n\n  const timestamp = Math.floor(Date.now() / 1000).toString();\n  const sig = crypto\n    .createHmac('sha256', secret)\n    .update(`${timestamp}.${rawBody}`)\n    .digest('hex');\n\n  output.push({\n    json: {\n      writebackUrl: `${baseUrl}/api/n8n/reminder-status`,\n      timestamp,\n      signature: `sha256=${sig}`,\n      rawBody,\n    },\n  });\n}\n\nreturn output;"
+      },
+      "id": "send-and-sign-1",
+      "name": "Send Reminders & Sign Write-Back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.writebackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.rawBody }}",
+        "options": {}
+      },
+      "id": "http-writeback-1",
+      "name": "Write Reminder Status to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Daily 09:00 UTC Trigger": {
+      "main": [
+        [
+          {
+            "node": "Sign Overdue Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Overdue Fetch": {
+      "main": [
+        [
+          {
+            "node": "Fetch Overdue Loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Overdue Loans": {
+      "main": [
+        [
+          {
+            "node": "Send Reminders & Sign Write-Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reminders & Sign Write-Back": {
+      "main": [
+        [
+          {
+            "node": "Write Reminder Status to Convex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "LendLoop - Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger-1",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json;\nconst alert = {\n  service: 'lendloop-n8n',\n  severity: 'error',\n  workflowName: payload.workflow?.name ?? 'unknown',\n  workflowId: payload.workflow?.id ?? null,\n  executionId: payload.execution?.id ?? null,\n  executionUrl: payload.execution?.url ?? null,\n  failedNode: payload.execution?.lastNodeExecuted ?? 'unknown',\n  errorMessage: payload.execution?.error?.message ?? 'Unknown workflow error',\n  timestamp: new Date().toISOString(),\n};\n\nconsole.error('[LendLoop n8n ERROR]', JSON.stringify(alert));\n\n// In production, connect a Slack / PagerDuty / Email node after this node\n// using n8n Credentials so on-call engineers are alerted immediately.\nreturn [{ json: alert }];"
+      },
+      "id": "format-error-1",
+      "name": "Log Structured Error Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log Structured Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
